@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>USSD Simulator · Mama Mboga Deni Ledger</title>
+<style>
+  body{margin:0;font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif;background:#eef0ec;color:#1d2321;display:flex;gap:32px;justify-content:center;flex-wrap:wrap;padding:32px}
+  .phone{width:320px;background:#1b1f1d;border-radius:36px;padding:22px 16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .screen{background:#f4f6f3;border-radius:16px;min-height:300px;padding:16px;white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:14px}
+  .screen .hint{color:#737b77}
+  .controls{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+  input{font:inherit;padding:10px;border-radius:10px;border:1px solid #444;background:#2a302d;color:#fff}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  button{font:inherit;font-weight:600;padding:10px;border-radius:10px;border:0;cursor:pointer}
+  .send{background:#2f7a3d;color:#fff}.cancel{background:#b3261e;color:#fff}
+  label{color:#bbb;font-size:12px}
+  .panel{width:420px;max-width:100%}
+  .sms{background:#fff;border:1px solid #e3e6e1;border-radius:10px;padding:10px 12px;margin-bottom:8px}
+  .sms .to{font-size:12px;color:#4a524e;font-weight:600}
+  h2{font-size:16px;margin:0 0 10px}
+  .muted{color:#737b77;font-size:13px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <label for="msisdn">Phone number (who is dialing)</label>
+  <input id="msisdn" value="+254711000001">
+  <div class="screen" id="screen" aria-live="polite"><span class="hint">Dial the code to start.</span></div>
+  <div class="controls">
+    <input id="input" placeholder="Dial code, then type replies" autocomplete="off">
+    <div class="row"><button class="send" id="send">Send</button><button class="cancel" id="cancel">Cancel</button></div>
+  </div>
+</div>
+<div class="panel">
+  <h2>SMS outbox</h2>
+  <p class="muted">Messages the app sends (approval prompts to mama mboga, confirmations to customers).
+    With <code>AT_API_KEY</code> set they are also sent for real. Tip: use one number as the mama mboga and another as the customer.</p>
+  <div id="outbox"></div>
+</div>
+<script>
+  const screen = document.getElementById('screen');
+  const input = document.getElementById('input');
+  let session = null, inputs = [], code = '*384*1234#';
+  fetch('/simulator/config').then(r => r.json()).then(c => { code = c.ussdCode; input.value = code; });
+
+  async function send() {
+    const value = input.value.trim();
+    input.value = '';
+    if (!session) {
+      if (value !== code) { screen.textContent = `Unknown code. Dial ${code}`; input.value = code; return; }
+      session = 'SIM' + Date.now();
+      inputs = [];
+    } else {
+      inputs.push(value);
+    }
+    const body = new URLSearchParams({ sessionId: session, serviceCode: code,
+      phoneNumber: document.getElementById('msisdn').value, text: inputs.join('*') });
+    const reply = await (await fetch('/ussd', { method: 'POST', body })).text();
+    screen.textContent = reply.slice(4);
+    if (reply.startsWith('END')) { session = null; input.value = code; }
+    input.focus();
+    loadOutbox();
+  }
+  function cancel() { session = null; screen.innerHTML = '<span class="hint">Session ended.</span>'; input.value = code; }
+
+  async function loadOutbox() {
+    const list = await (await fetch('/simulator/outbox')).json();
+    const box = document.getElementById('outbox');
+    box.replaceChildren(...list.map(m => {
+      const d = document.createElement('div'); d.className = 'sms';
+      const to = document.createElement('div'); to.className = 'to'; to.textContent = `To ${m.to} · ${m.at.slice(11, 19)}`;
+      const t = document.createElement('div'); t.textContent = m.message;
+      d.append(to, t); return d;
+    }));
+    if (!list.length) box.innerHTML = '<p class="muted">No messages yet.</p>';
+  }
+  document.getElementById('send').onclick = send;
+  document.getElementById('cancel').onclick = cancel;
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+  loadOutbox(); setInterval(loadOutbox, 3000);
+</script>
+</body>
+</html>
